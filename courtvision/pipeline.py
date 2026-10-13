@@ -1,0 +1,185 @@
+"""End-to-end orchestration: video in, tracking data + events + 3D scene out.
+
+Stages (each cached to ``output.cache_dir`` so re-runs only redo what changed):
+
+    1. detect + track          players, referees, ball candidates, hoop
+    2. court keypoints         -> per-frame homography -> per-frame camera
+    3. ball cleaning           select, de-outlier, interpolate
+    4. team assignment         one team per track
+    5. possession              per-frame holder with hysteresis
+    6. events                  passes, interceptions, turnovers, shots, rebounds
+    7. court projection        metres, speed and distance
+    8. 3D                      ball height from physics, scene export
+    9. outputs                 CSVs, JSON scene, 3D HTML, annotated video
+
+Frames are streamed, never all held in memory, so a full game works on Colab.
+"""
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+import numpy as np
+
+from .ball.interpolation import clean_ball_track
+from .config import Config
+from .court.geometry import get_court
+from .court.homography import estimate_homographies
+from .events.passes import detect_passes
+from .events.shots import detect_shots
+from .events.timeline import annotate_shots, box_score, events_table, touches_table, tracking_table
+from .io.cache import cache_key, cached
+from .io.video import iter_frames, read_frames_at, video_info
+from .possession.acquisition import NO_POSSESSION, detect_possession, possession_segments, team_control
+from .recon3d.ball3d import cameras_for_frames, reconstruct_ball_3d
+from .recon3d.scene import build_scene, save_scene_json, scene_to_plotly
+from .metrics.speed_distance import speed_and_distance
+from .tactical.projector import project_tracks
+from .teams.team_assigner import TeamAssigner
+from .types import PipelineResult
+
+log = logging.getLogger(__name__)
+
+
+class Pipeline:
+    def __init__(self, cfg: Config | None = None):
+        self.cfg = cfg or Config()
+        self.court = get_court(self.cfg.court.standard)
+        self.team_colors_bgr: list[tuple[int, int, int]] = TeamAssigner.team_bgr(None)
+
+    # ------------------------------------------------------------------ stages
+    def detect(self, video: Path, fps: float, total: int):
+        from .detection.tracker import ObjectTracker
+        c = self.cfg
+        tracker = ObjectTracker(c.models.detector, c.detection, c.models.device, c.models.ball_detector, fps)
+        return tracker.run(iter_frames(video), total=total)
+
+    def court_keypoints(self, video: Path, total: int):
+        from .court.keypoints import CourtKeypointDetector
+        det = CourtKeypointDetector(self.cfg.models.court_keypoints, self.cfg.models.device)
+        return det.run(iter_frames(video), total=total)
+
+    # --------------------------------------------------------------------- run
+    def run(self, video_path: str | Path, output_dir: str | Path | None = None) -> PipelineResult:
+        c = self.cfg
+        video = Path(video_path)
+        out_dir = Path(output_dir or c.output.dir) / video.stem
+        out_dir.mkdir(parents=True, exist_ok=True)
+        fps, total, size = video_info(video)
+        cache = c.output.cache_dir
+
+        det = cached(cache, cache_key(video, "detect", c.models.detector, c.models.ball_detector, c.detection),
+                     lambda: self.detect(video, fps, total))
+        n = len(det.players)
+
+        if c.models.court_keypoints and Path(c.models.court_keypoints).exists():
+            kps = cached(cache, cache_key(video, "keypoints", c.models.court_keypoints),
+                         lambda: self.court_keypoints(video, total))
+            homographies = estimate_homographies(kps, self.court, c.court.keypoint_conf,
+                                                 c.court.homography_hold_frames, c.court.homography_smoothing)
+        else:
+            log.warning("No court keypoint model; skipping court-space outputs (tactical view, speed, 3D).")
+            homographies = [None] * n
+
+        assigner = TeamAssigner(c.teams)
+        needed = sorted({f for fs in assigner.sample_frames(det.players).values() for f in fs})
+        team_of = assigner.assign(read_frames_at(video, needed), det.players)
+        self.team_colors_bgr = TeamAssigner.team_bgr(assigner.team_colors)
+
+        result = self.analyze(det, homographies, team_of, fps, size)
+        self.write_outputs(result, video, out_dir)
+        return result
+
+    def analyze(self, det, homographies, team_of: dict[int, int], fps: float,
+                size: tuple[int, int]) -> PipelineResult:
+        """Everything after the models: pure geometry and logic, unit-testable without a GPU."""
+        c = self.cfg
+        ball = clean_ball_track(det.ball_candidates, c.ball.max_speed_px_per_frame, c.ball.max_gap_frames)
+        possessor = detect_possession(det.players, ball, c.possession.max_distance_ratio, c.possession.min_frames)
+        segments = possession_segments(possessor, team_of)
+        shots = detect_shots(ball, det.hoops, possessor, segments, c.events.shot_window_frames)
+        passes = detect_passes(segments, c.events.interception_max_gap_frames,
+                               shot_frames={e.frame for e in shots if e.type == "shot"})
+        events = passes + shots
+
+        court_pos = project_tracks(det.players, homographies, self.court)
+        annotate_shots(events, court_pos, self.court)
+        speed, dist = speed_and_distance(court_pos, fps, c.metrics.speed_window_frames, c.metrics.max_speed_mps)
+        cams = cameras_for_frames(homographies, size)
+        ball_3d = reconstruct_ball_3d(ball, possessor, cams, court_pos, fps)
+
+        return PipelineResult(fps=fps, frame_size=size, players=det.players, referees=det.referees, ball=ball,
+                              hoops=det.hoops, team_of=team_of, possessor=possessor, possessions=segments,
+                              events=events, homographies=homographies, court_positions=court_pos,
+                              speed_kmh=speed, distance_m=dist, ball_3d=ball_3d)
+
+    # ----------------------------------------------------------------- outputs
+    def write_outputs(self, result: PipelineResult, video: Path, out_dir: Path) -> None:
+        names = self.cfg.teams.team_names
+        touches = touches_table(result.possessions, result, names)
+        events = events_table(result.events, result.fps, names)
+        touches.to_csv(out_dir / "touches.csv", index=False)
+        events.to_csv(out_dir / "events.csv", index=False)
+        box_score(events, touches).to_csv(out_dir / "box_score.csv", index=False)
+        if result.court_positions:
+            tracking_table(result).to_csv(out_dir / "tracking.csv", index=False)
+            scene = build_scene(result, self.court, names)
+            save_scene_json(scene, out_dir / "scene.json")
+            if self.cfg.output.write_3d_html:
+                colors = tuple("#%02x%02x%02x" % tuple(reversed(c)) for c in self.team_colors_bgr)
+                scene_to_plotly(scene, self.court, out_dir / "play_3d.html", team_colors=colors)
+        if self.cfg.output.write_video:
+            self.render_video(result, video, out_dir / f"{video.stem}_annotated.mp4")
+        log.info("Outputs written to %s", out_dir)
+
+    def render_video(self, result: PipelineResult, video: Path, path: Path) -> None:
+        import cv2
+        from .tactical.render import TacticalRenderer
+        from .viz.annotate import draw_ball, draw_panel, draw_player, paste_minimap
+
+        renderer = TacticalRenderer(self.court)
+        control = team_control(result.possessor, result.team_of)
+        names = self.cfg.teams.team_names
+        w, h = result.frame_size
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), result.fps, (w, h))
+        counts = {"pass": [0, 0], "interception": [0, 0]}
+        events_by_frame: dict[int, list] = {}
+        for e in result.events:
+            events_by_frame.setdefault(e.frame, []).append(e)
+
+        for f, frame in enumerate(iter_frames(video)):
+            if f >= len(result.players):
+                break
+            for e in events_by_frame.get(f, []):
+                if e.type in counts and e.team in (0, 1):
+                    counts[e.type][e.team] += 1
+            holder = result.possessor[f]
+            for tid, p in result.players[f].items():
+                team = result.team_of.get(tid, -1)
+                color = self.team_colors_bgr[team] if team in (0, 1) else (128, 128, 128)
+                draw_player(frame, p["bbox"], color, tid, has_ball=tid == holder)
+            for tid, p in result.referees[f].items():
+                draw_player(frame, p["bbox"], (0, 220, 255), tid, label="REF")
+            if result.ball[f] is not None:
+                draw_ball(frame, result.ball[f])
+
+            seen = [t for t in control[: f + 1] if t in (0, 1)]
+            share = [seen.count(i) / len(seen) * 100 if seen else 0 for i in (0, 1)]
+            lines = [f"{names[i]}: ball {share[i]:.0f}%  P {counts['pass'][i]}  INT {counts['interception'][i]}"
+                     for i in (0, 1)]
+            ids = [tid for tid in result.players[f] if tid in result.speed_kmh]
+            if holder != NO_POSSESSION and result.speed_kmh.get(holder, [None] * (f + 1))[f] is not None:
+                lines.append(f"#{holder}: {result.speed_kmh[holder][f]:.1f} km/h, "
+                             f"{result.distance_m[holder][f]:.0f} m")
+            draw_panel(frame, lines)
+
+            if result.homographies[f] is not None and ids:
+                pos = {t: result.court_positions[t][f] for t in ids if result.court_positions[t][f] is not None}
+                b3 = result.ball_3d[f]
+                mini = renderer.render(pos, result.team_of, self.team_colors_bgr,
+                                       ball=(b3[0], b3[1]) if b3 else None,
+                                       possessor=holder if holder != NO_POSSESSION else None)
+                paste_minimap(frame, mini)
+            cv2.putText(frame, f"{f}", (w - 80, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            writer.write(frame)
+        writer.release()

@@ -1,0 +1,54 @@
+# CourtVision default configuration. Every key is optional; anything omitted
+# falls back to the defaults in courtvision/config.py.
+
+models:
+  detector: models/player_detector.pt        # YOLO detect: Ball, Clock, Hoop, Overlay, Player, Ref, Scoreboard
+  ball_detector: null                        # optional dedicated ball model (higher recall on small balls)
+  court_keypoints: models/court_keypoints.pt # YOLO pose: 18 court keypoints
+  device: null                               # null = auto (cuda if available)
+
+detection:
+  imgsz: 1280
+  conf: 0.10
+  ball_conf: 0.05
+  batch_size: 16
+  track_buffer: 60                           # frames a lost player track stays alive through occlusion
+  class_names:
+    player: [Player]
+    referee: [Ref]
+    ball: [Ball]
+    hoop: [Hoop]
+
+teams:
+  method: color          # color | clip
+  team_names: [Team A, Team B]
+  clip_prompts: null     # e.g. ["white jersey", "dark blue jersey"] when method=clip
+  samples_per_track: 12
+
+ball:
+  max_speed_px_per_frame: 90
+  max_gap_frames: 20
+
+possession:
+  max_distance_ratio: 0.35   # ball-to-player distance as a fraction of player bbox height
+  min_frames: 5              # hysteresis before a possession change is accepted
+
+events:
+  interception_max_gap_frames: 45
+  shot_window_frames: 45
+
+court:
+  standard: nba          # nba | fiba
+  keypoint_conf: 0.5
+  homography_hold_frames: 15
+  homography_smoothing: 0.6
+
+metrics:
+  speed_window_frames: 5
+  max_speed_mps: 11.0
+
+output:
+  dir: output
+  cache_dir: stubs
+  write_video: true
+  write_3d_html: true

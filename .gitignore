@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+.venv/
+.env
+
+# Large artifacts stay out of git: keep weights in Drive / releases.
+models/*
+!models/.gitkeep
+!models/README.md
+input_videos/*
+!input_videos/.gitkeep
+output/*
+!output/.gitkeep
+stubs/
+runs/
+datasets/
+*.pt
+*.onnx
+*.mp4
+*.avi
+*.pkl
