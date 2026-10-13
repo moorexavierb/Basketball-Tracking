@@ -47,8 +47,21 @@ metrics:
   speed_window_frames: 5
   max_speed_mps: 11.0
 
+pose:
+  enabled: false           # 2D body keypoints per player, lifted to 3D skeletons in scene.json
+  model: yolo11m-pose.pt   # any ultralytics COCO-17 pose model
+  imgsz: 1280
+  conf: 0.25
+  batch_size: 16
+  match_iou: 0.4
+  min_keypoint_conf: 0.3
+  player_height_m: 2.0
+  smooth_window: 5
+
 output:
   dir: output
   cache_dir: stubs
   write_video: true
   write_3d_html: true
+  viewer: bodies           # bodies (animated three.js players) | plotly (dots)
+  character_glb: null      # optional rigged Mixamo-style .glb used for every player

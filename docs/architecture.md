@@ -84,14 +84,36 @@ Positions are median-filtered before differencing; steps faster than
   discarded.
 * Players stand on the floor (z = 0) at their projected position.
 
-`scene.json` holds the per-frame scene; `play_3d.html` is an animated Plotly
-view. Player height and pose are not modelled yet; a natural next step is a
-2D pose model per player box lifted with the recovered camera.
+## 9. Player bodies (`pose/`, `recon3d/viewer.py`)
+
+Optional (`pose.enabled`). A YOLO pose model finds COCO-17 body keypoints on
+each frame; each detected person is matched to a player track by box overlap,
+so skeletons inherit track IDs and teams. Lifting to 3D uses the recovered
+camera: every joint lies on the ray through its pixel, so only its depth along
+the ray is unknown. Depths are solved per player per frame by least squares
+against bone-length priors (scaled to `player_height_m`), a reach limit around
+the tracked court position, the floor, and the previous frame's depths, then
+smoothed. On a synthetic broadcast camera joints land within about 5 cm.
+Known limits: occluded or blurred limbs drop out (the viewer synthesizes
+them); a limb pointing straight at the camera has an ambiguous depth; lifting
+costs about 10 ms per player-frame, so it suits clips more than full games.
+A learned lifter (MotionBERT) or SMPL body fitting can replace `lift_pose`
+with the same inputs and outputs.
+
+`scene.json` holds the per-frame scene, with `pose` (17 joints in court
+metres) on players that have a skeleton. `play_3d.html` is a three.js page
+with articulated bodies posed from that file: speed blends idle, walk and run
+with a stride phase tied to distance covered; the defending team faces the
+ball in a stance; shot and pass events drive the jump, release, contest, push
+and catch; measured skeletons override the synthesized limbs. A rigged
+Mixamo-style `.glb` (`output.character_glb`) replaces the mannequin and is
+retargeted from the same skeleton. `output.viewer: plotly` keeps the older
+dot view.
 
 ## Roadmap
 
 * Jersey-number OCR to turn track IDs into real players (and re-link IDs after long occlusions).
 * More court landmarks for close-up coverage.
-* Player pose (skeletons) in the 3D scene.
+* Learned 3D lifting or SMPL fitting for player bodies; hand and head detail.
 * Shot outcome from hoop/net motion as a second signal.
 * Full-game batching: split by camera cuts, run segments in parallel.

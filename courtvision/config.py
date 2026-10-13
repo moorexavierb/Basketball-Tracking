@@ -72,11 +72,26 @@ class MetricsConfig:
 
 
 @dataclass
+class PoseConfig:
+    enabled: bool = False          # adds a GPU pass; ~10 ms per player-frame to lift, so best on clips
+    model: str = "yolo11m-pose.pt"  # any ultralytics COCO-17 pose model; downloaded on first use
+    imgsz: int = 1280
+    conf: float = 0.25
+    batch_size: int = 16
+    match_iou: float = 0.4         # pose box to player track box overlap needed to attach a pose
+    min_keypoint_conf: float = 0.3
+    player_height_m: float = 2.0   # bone-length prior; NBA average is about 1.98 m
+    smooth_window: int = 5
+
+
+@dataclass
 class OutputConfig:
     dir: str = "output"
     cache_dir: str | None = "stubs"
     write_video: bool = True
     write_3d_html: bool = True
+    viewer: str = "bodies"              # bodies (three.js animated players) | plotly (dots)
+    character_glb: str | None = None    # rigged Mixamo-style .glb used for every player in the bodies viewer
 
 
 @dataclass
@@ -89,6 +104,7 @@ class Config:
     events: EventsConfig = field(default_factory=EventsConfig)
     court: CourtConfig = field(default_factory=CourtConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
+    pose: PoseConfig = field(default_factory=PoseConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 
     @classmethod

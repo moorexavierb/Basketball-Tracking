@@ -8,7 +8,8 @@ The goal is to take videos of professional basketball games (NBA, NCAA) and use 
 broadcast video ──► detect + track ──► teams ──► possession ──► passes / interceptions / shots
                          │                                              │
                          └─► court keypoints ─► homography ─► camera ──►├─► court positions (m), speed, distance
-                                                                        └─► 3D ball (physics) ─► 3D scene
+                                                                        ├─► 3D ball (physics) ──────────────┐
+                                                                        └─► body keypoints ─► 3D skeletons ─┴─► 3D scene, animated players
 ```
 
 Starting point: [abdullahtarek/basketball_analysis](https://github.com/abdullahtarek/basketball_analysis).
@@ -21,6 +22,7 @@ What CourtVision does beyond it:
 | Camera | Floor plane only | Full camera (focal, pose) recovered per frame, so points off the floor can be projected |
 | Ball | Highest-confidence box, linear fill | Continuity-aware selection, outlier rejection, gap-limited interpolation |
 | Ball height | None | Physics fit: parabolic flight (gravity) fitted to every frame of a pass or shot |
+| Players in 3D | None | Animated bodies (gait from speed, stances, shots, passes), 3D skeletons lifted from video, rigged characters |
 | Teams | Zero-shot CLIP per frame | Per-track decision (no flicker): jersey-colour clustering by default, CLIP optional |
 | Possession | Per-frame nearest player | Hand-point distance scaled by player size, with hysteresis |
 | Events | Passes, interceptions | + turnovers, shot attempts, makes, 2PT/3PT, shot distance, offensive/defensive rebounds |
@@ -57,7 +59,7 @@ Outputs land in `output/<video name>/`.
 | `tracking.csv` | Every player and the ball, every frame, in court metres (ball includes height), with speed and running distance |
 | `box_score.csv` | Per player: touches, time of possession, passes, interceptions, turnovers, FGA/FGM, 3PA/3PM |
 | `scene.json` | Per-frame 3D scene for any front-end (three.js, Unity, Blender) |
-| `play_3d.html` | Interactive, animated 3D reconstruction |
+| `play_3d.html` | Animated 3D reconstruction with player bodies (three.js); open it in any browser |
 | `<video>_annotated.mp4` | Broadcast overlay: IDs, team colours, ball, holder, possession %, passes, minimap |
 
 ## Layout
@@ -79,7 +81,8 @@ courtvision/
   court/homography.py       robust homography, temporal filtering, camera recovery
   tactical/                 image-to-court projection, top-down court rendering
   metrics/speed_distance.py smoothed speed and distance
-  recon3d/                  3D ball from physics, scene export (JSON, Plotly)
+  pose/                     2D body keypoints per track, lifted to 3D skeletons with the camera
+  recon3d/                  3D ball from physics, scene export (JSON), three.js body viewer, Plotly
   viz/annotate.py           video overlays
   pipeline.py               orchestration
   cli.py                    `courtvision run ...`

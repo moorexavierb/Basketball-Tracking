@@ -5,6 +5,8 @@ court, imaged through a synthetic broadcast camera, and drawn into a video.
 Player 1 passes to player 2. The test checks team assignment, the detected
 pass, court-space tracking, the 3D ball and every output file.
 """
+import json
+
 import numpy as np
 import cv2
 import pandas as pd
@@ -17,6 +19,7 @@ from courtvision.pipeline import Pipeline
 from courtvision.teams.team_assigner import TeamAssigner
 from courtvision.types import DetectionResult
 from conftest import floor_homography
+from test_pose import standing_skeleton
 
 JERSEYS = {0: (240, 240, 240), 1: (140, 40, 20)}  # BGR: white, dark blue
 
@@ -71,7 +74,13 @@ def test_synthetic_play(tmp_path, broadcast_cam):
     team_of = assigner.assign(frames, players)
     assert team_of[1] == team_of[2] != team_of[3] == team_of[4]
 
-    result = pipe.analyze(det, [H] * n, team_of, fps, size)
+    # 2D body keypoints for player 3, as the pose model would report them.
+    poses2d = []
+    for f in range(n):
+        uv = np.array([project(P, X)[0] for X in standing_skeleton(9.0 + 0.05 * f, 4.0)])
+        poses2d.append({3: np.column_stack([uv, np.full(17, 0.9)])})
+
+    result = pipe.analyze(det, [H] * n, team_of, fps, size, poses2d)
     passes = [e for e in result.events if e.type == "pass"]
     assert len(passes) == 1 and passes[0].player_id == 1 and passes[0].target_id == 2
 
@@ -89,5 +98,11 @@ def test_synthetic_play(tmp_path, broadcast_cam):
     for name in ["touches.csv", "events.csv", "box_score.csv", "tracking.csv", "scene.json",
                  "play_3d.html", "synthetic_annotated.mp4"]:
         assert (out_dir / name).exists(), name
+    scene = json.loads((out_dir / "scene.json").read_text())
+    p3 = next(p for p in scene["frames"][10]["players"] if p["id"] == 3)
+    assert scene["pose_format"]["name"] == "coco17" and len(p3["pose"]) == 17
+    assert abs(p3["pose"][0][2] - 1.95) < 0.25   # nose at head height
+    html = (out_dir / "play_3d.html").read_text()
+    assert html.startswith("<!doctype html>") and '"pose_format"' in html and "/*__CV_SCENE__*/null" not in html
     box = pd.read_csv(out_dir / "box_score.csv")
     assert box.set_index("player_id").loc[1, "passes"] == 1

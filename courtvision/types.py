@@ -79,3 +79,5 @@ class PipelineResult:
     speed_kmh: dict[int, list[Optional[float]]]
     distance_m: dict[int, list[Optional[float]]]
     ball_3d: list[Optional[tuple[float, float, float]]]
+    # track id -> frame -> (17, 3) COCO-17 skeleton in court metres; empty unless pose is enabled
+    pose_3d: dict[int, list[Optional[np.ndarray]]] = field(default_factory=dict)
