@@ -574,6 +574,27 @@ function loadCharacter(buffer) {
   });
 }
 
+// Recolour bright, unsaturated texels (a white jersey and shorts) to the team colour, keeping their
+// shading; skin, hair, tattoos and dark trim are left as painted.
+function teamTint(material, color) {
+  const team = { value: color.clone().convertSRGBToLinear() };
+  material.customProgramCacheKey = () => "cv-team-tint";
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.teamColor = team;
+    shader.fragmentShader = shader.fragmentShader
+      .replace("void main() {", "uniform vec3 teamColor;\nvoid main() {")
+      .replace("#include <map_fragment>", `#include <map_fragment>
+      {
+        vec3 c = diffuseColor.rgb;
+        float hi = max(c.r, max(c.g, c.b)), lo = min(c.r, min(c.g, c.b));
+        float sat = hi > 0.0 ? (hi - lo) / hi : 0.0;
+        float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        float kit = smoothstep(0.30, 0.55, lum) * (1.0 - smoothstep(0.12, 0.30, sat));
+        diffuseColor.rgb = mix(c, teamColor * clamp(lum / 0.75, 0.0, 1.2), kit);
+      }`);
+  };
+}
+
 function attachCharacter(pl) {
   const model = THREE.SkeletonUtils.clone(CHAR.scene);
   model.scale.setScalar(CHAR.scale);
@@ -582,7 +603,12 @@ function attachCharacter(pl) {
   model.traverse((o) => {
     if (!o.isMesh) return;
     o.castShadow = true; o.frustumCulled = false;
-    const t = (m) => { m = m.clone(); if (m.color) m.color.lerp(tint, 0.7); return m; };
+    const t = (m) => {
+      m = m.clone();
+      if (m.map) teamTint(m, tint);              // textured: recolour only the white kit
+      else if (m.color) m.color.lerp(tint, 0.7); // untextured: tint the whole material
+      return m;
+    };
     o.material = Array.isArray(o.material) ? o.material.map(t) : t(o.material);
   });
   const root = pl.P.root;
