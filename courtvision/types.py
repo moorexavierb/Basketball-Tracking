@@ -81,3 +81,9 @@ class PipelineResult:
     ball_3d: list[Optional[tuple[float, float, float]]]
     # track id -> frame -> (17, 3) COCO-17 skeleton in court metres; empty unless pose is enabled
     pose_3d: dict[int, list[Optional[np.ndarray]]] = field(default_factory=dict)
+    # per-frame court calibration info (keypoints seen, fit error, mapping source); see diagnostics.py
+    calibration: list[dict] = field(default_factory=list)
+    # track id -> id it was merged into by re-linking
+    track_remap: dict[int, int] = field(default_factory=dict)
+    diagnostics: Optional[dict] = None
+    diagnostics_frames: Optional[object] = None  # pandas DataFrame, one row per frame

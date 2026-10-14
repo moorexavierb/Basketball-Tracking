@@ -41,7 +41,18 @@ court:
   standard: nba          # nba | fiba
   keypoint_conf: 0.5
   homography_hold_frames: 15
-  homography_smoothing: 0.6
+  homography_smoothing: 0.6   # weight on the camera-tracked mapping when a keypoint fit agrees
+  camera_motion: true         # follow pans and zooms with optical flow between keypoint fits
+  max_flow_frames: 150        # longest stretch carried on camera motion alone (5 s at 30 fps)
+  reject_threshold_m: 1.5     # keypoint fits this far from the tracked mapping are dropped
+
+tracking:
+  relink: true                # join player tracks the tracker split in two (same team, reachable, no overlap)
+  relink_max_gap_s: 1.0
+  relink_max_speed_mps: 6.0
+  smooth: true                # remove spikes, fill short gaps, smooth court positions before 3D and metrics
+  max_fill_s: 0.5
+  smooth_window_s: 0.3
 
 metrics:
   speed_window_frames: 5
@@ -65,3 +76,4 @@ output:
   write_3d_html: true
   viewer: bodies           # bodies (animated three.js players) | plotly (dots)
   character_glb: null      # optional rigged Mixamo-style .glb used for every player
+  write_diagnostics: true  # diagnostics.json, diagnostics_frames.csv, diagnostics.png
