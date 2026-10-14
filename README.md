@@ -26,7 +26,7 @@ What CourtVision does beyond it:
 | Teams | Zero-shot CLIP per frame | Per-track decision (no flicker): jersey-colour clustering by default, CLIP optional |
 | Possession | Per-frame nearest player | Hand-point distance scaled by player size, with hysteresis |
 | Events | Passes, interceptions | + turnovers, shot attempts, makes, 2PT/3PT, shot distance, offensive/defensive rebounds |
-| Data out | Annotated video | `events.csv`, `touches.csv`, `tracking.csv`, `box_score.csv`, `scene.json`, interactive 3D HTML, video |
+| Data out | Annotated video | `touches.parquet`/`.csv` (main table), `events.csv`, `tracking.csv`, `box_score.csv`, `scene.json`, interactive 3D HTML, video |
 | Memory | Whole video in RAM | Frames streamed; full games fit in Colab |
 | Tests | None | Unit tests plus a synthetic end-to-end clip with a known camera |
 
@@ -55,7 +55,7 @@ Outputs land in `output/<video name>/`.
 | File | Contents |
 |---|---|
 | `events.csv` | One row per event: `pass`, `interception`, `turnover`, `shot`, `made_shot`, `offensive_rebound`, `defensive_rebound`, with time, player, team, target, and for shots the location, distance and points |
-| `touches.csv` | One row per touch (possession segment): who, when, how long, where it started and ended on the court |
+| `touches.parquet`, `touches.csv` | **The main table.** One row per touch: player, how the touch started (catch, steal, rebound), the action (pass, shot, turnover) with outcome and target, dribbles, the handler's position, speed and nearest defender, every other player's id, position and speed at that moment, and a confidence score |
 | `tracking.csv` | Every player and the ball, every frame, in court metres (ball includes height), with speed and running distance |
 | `box_score.csv` | Per player: touches, time of possession, passes, interceptions, turnovers, FGA/FGM, 3PA/3PM |
 | `scene.json` | Per-frame 3D scene for any front-end (three.js, Unity, Blender) |

@@ -95,7 +95,7 @@ def test_synthetic_play(tmp_path, broadcast_cam):
     out_dir = tmp_path / "out" / "synthetic"
     out_dir.mkdir(parents=True)
     pipe.write_outputs(result, video, out_dir)
-    for name in ["touches.csv", "events.csv", "box_score.csv", "tracking.csv", "scene.json",
+    for name in ["touches.csv", "touches.parquet", "events.csv", "box_score.csv", "tracking.csv", "scene.json",
                  "play_3d.html", "synthetic_annotated.mp4"]:
         assert (out_dir / name).exists(), name
     scene = json.loads((out_dir / "scene.json").read_text())
@@ -106,3 +106,15 @@ def test_synthetic_play(tmp_path, broadcast_cam):
     assert html.startswith("<!doctype html>") and '"pose_format"' in html and "/*__CV_SCENE__*/null" not in html
     box = pd.read_csv(out_dir / "box_score.csv")
     assert box.set_index("player_id").loc[1, "passes"] == 1
+
+    # Touch-by-touch: player 1 passes to player 2, who holds it to the end of the clip.
+    touches = pd.read_parquet(out_dir / "touches.parquet")
+    assert list(touches.player_id) == [1, 2]
+    t1, t2 = touches.iloc[0], touches.iloc[1]
+    assert (t1.action, t1.outcome, t1.target_id) == ("pass", "completed", 2)
+    assert (t2.start_action, t2.action) == ("catch", "end_of_clip")
+    assert t1.possession_id == t2.possession_id
+    assert t1.tm1_id == 2 and {t1.op1_id, t1.op2_id} == {3, 4} and pd.isna(t1.op3_id)
+    assert t1.nearest_defender_id == 3 and abs(t1.nearest_defender_m - np.hypot(1, 2)) < 0.1
+    assert abs(t1.speed_kmh - 5.4) < 0.5 and abs(t1.op1_speed_kmh - 5.4) < 0.5
+    assert 0 < t1.confidence <= 1
