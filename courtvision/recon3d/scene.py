@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from ..court.geometry import RIM_HEIGHT_M, CourtSpec
+from ..pose.skeleton import JOINTS
 from ..types import PipelineResult
 
 
@@ -24,9 +25,13 @@ def build_scene(result: PipelineResult, court: CourtSpec, team_names: list[str])
             p = track[f]
             if p is None:
                 continue
-            players.append({"id": int(tid), "team": int(result.team_of.get(tid, -1)),
-                            "x": round(p[0], 3), "y": round(p[1], 3),
-                            "has_ball": result.possessor[f] == tid})
+            player = {"id": int(tid), "team": int(result.team_of.get(tid, -1)),
+                      "x": round(p[0], 3), "y": round(p[1], 3),
+                      "has_ball": result.possessor[f] == tid}
+            sk = result.pose_3d.get(tid, [None] * n)[f] if result.pose_3d else None
+            if sk is not None:  # COCO-17 joints in court metres, null where unseen
+                player["pose"] = [None if np.isnan(j).any() else [round(float(v), 3) for v in j] for j in sk]
+            players.append(player)
         b = result.ball_3d[f]
         frames.append({"frame": f, "t": round(f / result.fps, 3), "players": players,
                        "ball": None if b is None else [round(v, 3) for v in b]})
@@ -35,6 +40,7 @@ def build_scene(result: PipelineResult, court: CourtSpec, team_names: list[str])
                   "hoops": court.hoops.round(3).tolist()},
         "teams": team_names,
         "fps": result.fps,
+        "pose_format": {"name": "coco17", "joints": JOINTS} if result.pose_3d else None,
         "events": [{"frame": e.frame, "type": e.type, "player": e.player_id, "team": e.team,
                     "target": e.target_id} for e in result.events],
         "frames": frames,

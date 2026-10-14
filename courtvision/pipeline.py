@@ -9,7 +9,7 @@ Stages (each cached to ``output.cache_dir`` so re-runs only redo what changed):
     5. possession              per-frame holder with hysteresis
     6. events                  passes, interceptions, turnovers, shots, rebounds
     7. court projection        metres, speed and distance
-    8. 3D                      ball height from physics, scene export
+    8. 3D                      ball height from physics, player skeletons (optional), scene export
     9. outputs                 CSVs, JSON scene, 3D HTML, annotated video
 
 Frames are streamed, never all held in memory, so a full game works on Colab.
@@ -32,7 +32,9 @@ from .io.cache import cache_key, cached
 from .io.video import iter_frames, read_frames_at, video_info
 from .possession.acquisition import NO_POSSESSION, detect_possession, possession_segments, team_control
 from .recon3d.ball3d import cameras_for_frames, reconstruct_ball_3d
+from .pose.lift import lift_poses
 from .recon3d.scene import build_scene, save_scene_json, scene_to_plotly
+from .recon3d.viewer import scene_to_threejs
 from .metrics.speed_distance import speed_and_distance
 from .tactical.projector import project_tracks
 from .teams.team_assigner import TeamAssigner
@@ -58,6 +60,12 @@ class Pipeline:
         from .court.keypoints import CourtKeypointDetector
         det = CourtKeypointDetector(self.cfg.models.court_keypoints, self.cfg.models.device)
         return det.run(iter_frames(video), total=total)
+
+    def estimate_poses(self, video: Path, players, total: int):
+        from .pose.estimator import PoseEstimator
+        p = self.cfg.pose
+        est = PoseEstimator(p.model, p.imgsz, p.conf, p.batch_size, p.match_iou, self.cfg.models.device)
+        return est.run(iter_frames(video), players, total=total)
 
     # --------------------------------------------------------------------- run
     def run(self, video_path: str | Path, output_dir: str | Path | None = None) -> PipelineResult:
@@ -86,12 +94,18 @@ class Pipeline:
         team_of = assigner.assign(read_frames_at(video, needed), det.players)
         self.team_colors_bgr = TeamAssigner.team_bgr(assigner.team_colors)
 
-        result = self.analyze(det, homographies, team_of, fps, size)
+        poses2d = None
+        if c.pose.enabled:
+            poses2d = cached(cache, cache_key(video, "pose", c.pose.model, c.pose.imgsz, c.pose.conf,
+                                              c.pose.match_iou, c.models.detector, c.detection),
+                             lambda: self.estimate_poses(video, det.players, total))
+
+        result = self.analyze(det, homographies, team_of, fps, size, poses2d)
         self.write_outputs(result, video, out_dir)
         return result
 
     def analyze(self, det, homographies, team_of: dict[int, int], fps: float,
-                size: tuple[int, int]) -> PipelineResult:
+                size: tuple[int, int], poses2d=None) -> PipelineResult:
         """Everything after the models: pure geometry and logic, unit-testable without a GPU."""
         c = self.cfg
         ball = clean_ball_track(det.ball_candidates, c.ball.max_speed_px_per_frame, c.ball.max_gap_frames)
@@ -107,11 +121,14 @@ class Pipeline:
         speed, dist = speed_and_distance(court_pos, fps, c.metrics.speed_window_frames, c.metrics.max_speed_mps)
         cams = cameras_for_frames(homographies, size)
         ball_3d = reconstruct_ball_3d(ball, possessor, cams, court_pos, fps)
+        pose_3d = (lift_poses(poses2d, cams, court_pos, c.pose.player_height_m, c.pose.min_keypoint_conf,
+                              c.pose.smooth_window) if poses2d else {})
 
         return PipelineResult(fps=fps, frame_size=size, players=det.players, referees=det.referees, ball=ball,
                               hoops=det.hoops, team_of=team_of, possessor=possessor, possessions=segments,
                               events=events, homographies=homographies, court_positions=court_pos,
-                              speed_kmh=speed, distance_m=dist, ball_3d=ball_3d)
+                              speed_kmh=speed, distance_m=dist, ball_3d=ball_3d,
+                              pose_3d=pose_3d)
 
     # ----------------------------------------------------------------- outputs
     def write_outputs(self, result: PipelineResult, video: Path, out_dir: Path) -> None:
@@ -127,7 +144,11 @@ class Pipeline:
             save_scene_json(scene, out_dir / "scene.json")
             if self.cfg.output.write_3d_html:
                 colors = tuple("#%02x%02x%02x" % tuple(reversed(c)) for c in self.team_colors_bgr)
-                scene_to_plotly(scene, self.court, out_dir / "play_3d.html", team_colors=colors)
+                if self.cfg.output.viewer == "plotly":
+                    scene_to_plotly(scene, self.court, out_dir / "play_3d.html", team_colors=colors)
+                else:
+                    scene_to_threejs(scene, out_dir / "play_3d.html", team_colors=colors,
+                                     character_glb=self.cfg.output.character_glb)
         if self.cfg.output.write_video:
             self.render_video(result, video, out_dir / f"{video.stem}_annotated.mp4")
         log.info("Outputs written to %s", out_dir)
