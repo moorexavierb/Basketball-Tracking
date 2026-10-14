@@ -10,7 +10,8 @@ Stages (each cached to ``output.cache_dir`` so re-runs only redo what changed):
     6. events                  passes, interceptions, turnovers, shots, rebounds
     7. court projection        metres, speed and distance
     8. 3D                      ball height from physics, player skeletons (optional), scene export
-    9. outputs                 CSVs, JSON scene, 3D HTML, annotated video
+    9. outputs                 touches (CSV + Parquet, the main table), events, tracking,
+                               box score, JSON scene, 3D HTML, annotated video
 
 Frames are streamed, never all held in memory, so a full game works on Colab.
 """
@@ -48,6 +49,8 @@ class Pipeline:
         self.cfg = cfg or Config()
         self.court = get_court(self.cfg.court.standard)
         self.team_colors_bgr: list[tuple[int, int, int]] = TeamAssigner.team_bgr(None)
+        # track id -> {"jersey": ..., "name": ...}; fills those columns of the touches table when set
+        self.player_info: dict[int, dict] = {}
 
     # ------------------------------------------------------------------ stages
     def detect(self, video: Path, fps: float, total: int):
@@ -133,9 +136,13 @@ class Pipeline:
     # ----------------------------------------------------------------- outputs
     def write_outputs(self, result: PipelineResult, video: Path, out_dir: Path) -> None:
         names = self.cfg.teams.team_names
-        touches = touches_table(result.possessions, result, names)
+        touches = touches_table(result.possessions, result, names, self.court, self.player_info)
         events = events_table(result.events, result.fps, names)
         touches.to_csv(out_dir / "touches.csv", index=False)
+        try:
+            touches.to_parquet(out_dir / "touches.parquet", index=False)
+        except ImportError:
+            log.warning("pyarrow not installed; touches written as CSV only.")
         events.to_csv(out_dir / "events.csv", index=False)
         box_score(events, touches).to_csv(out_dir / "box_score.csv", index=False)
         if result.court_positions:

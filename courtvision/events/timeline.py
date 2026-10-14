@@ -1,4 +1,4 @@
-"""Touch-by-touch tables: the data product of the pipeline."""
+"""Event, tracking and box-score tables. The touches table lives in ``events.touches``."""
 from __future__ import annotations
 
 from typing import Optional
@@ -6,7 +6,8 @@ from typing import Optional
 import pandas as pd
 
 from ..court.geometry import CourtSpec
-from ..types import Event, PipelineResult, Possession
+from ..types import Event, PipelineResult
+from .touches import touches_table  # noqa: F401  (re-exported)
 
 
 def annotate_shots(events: list[Event], court_positions: dict[int, list[Optional[tuple[float, float]]]],
@@ -21,25 +22,6 @@ def annotate_shots(events: list[Event], court_positions: dict[int, list[Optional
             continue
         e.extra.update(x_m=pos[0], y_m=pos[1], distance_m=round(court.shot_distance(*pos), 2),
                        points=3 if court.is_three(*pos) else 2)
-
-
-def touches_table(possessions: list[Possession], result: PipelineResult, team_names: list[str]) -> pd.DataFrame:
-    """One row per touch (possession segment) with where it started and ended."""
-    rows = []
-    for i, p in enumerate(possessions):
-        track = result.court_positions.get(p.player_id, [])
-        start = track[p.start_frame] if track else None
-        end = track[p.end_frame] if track else None
-        rows.append({
-            "touch": i, "player_id": p.player_id,
-            "team": team_names[p.team] if p.team in (0, 1) else None,
-            "start_frame": p.start_frame, "end_frame": p.end_frame,
-            "start_s": round(p.start_frame / result.fps, 2), "end_s": round(p.end_frame / result.fps, 2),
-            "duration_s": round((p.end_frame - p.start_frame + 1) / result.fps, 2),
-            "start_x_m": start[0] if start else None, "start_y_m": start[1] if start else None,
-            "end_x_m": end[0] if end else None, "end_y_m": end[1] if end else None,
-        })
-    return pd.DataFrame(rows)
 
 
 def events_table(events: list[Event], fps: float, team_names: list[str]) -> pd.DataFrame:
@@ -75,7 +57,7 @@ def box_score(events: pd.DataFrame, touches: pd.DataFrame) -> pd.DataFrame:
     """Per-player counts: touches, passes, interceptions, shots (FGA/FGM, 3PA/3PM)."""
     if touches.empty:
         return pd.DataFrame()
-    df = touches.groupby(["player_id", "team"]).agg(touches=("touch", "count"),
+    df = touches.groupby(["player_id", "team"], dropna=False).agg(touches=("touch_id", "count"),
                                                     time_of_possession_s=("duration_s", "sum")).reset_index()
 
     def count(kind, extra=None):
