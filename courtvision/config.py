@@ -62,7 +62,20 @@ class CourtConfig:
     standard: str = "nba"
     keypoint_conf: float = 0.5
     homography_hold_frames: int = 15
-    homography_smoothing: float = 0.6
+    homography_smoothing: float = 0.6   # weight on the camera-tracked mapping when a keypoint fit agrees
+    camera_motion: bool = True          # follow pans/zooms with optical flow between keypoint fits
+    max_flow_frames: int = 150          # longest stretch carried on camera motion alone
+    reject_threshold_m: float = 1.5     # keypoint fits further than this from the tracked mapping are dropped
+
+
+@dataclass
+class TrackingConfig:
+    relink: bool = True                 # join player tracks the tracker split in two
+    relink_max_gap_s: float = 1.0
+    relink_max_speed_mps: float = 6.0
+    smooth: bool = True                 # de-spike, gap-fill and smooth court positions
+    max_fill_s: float = 0.5
+    smooth_window_s: float = 0.3
 
 
 @dataclass
@@ -92,6 +105,7 @@ class OutputConfig:
     write_3d_html: bool = True
     viewer: str = "bodies"              # bodies (three.js animated players) | plotly (dots)
     character_glb: str | None = None    # rigged Mixamo-style .glb used for every player in the bodies viewer
+    write_diagnostics: bool = True      # diagnostics.json / _frames.csv / .png: which stage is weak
 
 
 @dataclass
@@ -103,6 +117,7 @@ class Config:
     possession: PossessionConfig = field(default_factory=PossessionConfig)
     events: EventsConfig = field(default_factory=EventsConfig)
     court: CourtConfig = field(default_factory=CourtConfig)
+    tracking: TrackingConfig = field(default_factory=TrackingConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     pose: PoseConfig = field(default_factory=PoseConfig)
     output: OutputConfig = field(default_factory=OutputConfig)

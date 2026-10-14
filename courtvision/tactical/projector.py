@@ -33,3 +33,39 @@ def project_point(H: Optional[np.ndarray], pt: tuple[float, float]) -> Optional[
         return None
     x, y = apply_h(H, np.array([pt]))[0]
     return float(x), float(y)
+
+
+def smooth_court_positions(positions: CourtPositions, fps: float, max_fill_s: float = 0.5,
+                           window_s: float = 0.3) -> CourtPositions:
+    """Remove foot-point spikes, fill short gaps and take out frame-to-frame jitter.
+
+    Foot points jump when a box is cut off by another player or the detector
+    briefly loses someone, which shows as twitching and flickering bodies in
+    3D. Per track: a 5-frame median drops single-frame spikes, gaps up to
+    ``max_fill_s`` inside the track are interpolated, then a centred moving
+    average over ``window_s`` smooths what is left. Track ends keep their own
+    values so the smoothing never drags a player inward, and long gaps stay
+    empty.
+    """
+    import pandas as pd
+
+    limit = max(1, int(round(max_fill_s * fps)))
+    win = max(3, int(round(window_s * fps)) | 1)
+    out: CourtPositions = {}
+    for tid, track in positions.items():
+        arr = pd.DataFrame([p if p is not None else (np.nan, np.nan) for p in track], dtype=float)
+        valid = arr[0].notna().to_numpy()
+        if valid.sum() < 3:
+            out[tid] = list(track)
+            continue
+        med = arr.rolling(5, center=True).median().where(arr.notna()).fillna(arr)
+        filled = med.interpolate(limit_area="inside")
+        # Undo fills inside gaps longer than the limit.
+        gap_run = (~valid).astype(int)
+        run_id = np.cumsum(np.r_[0, np.diff(gap_run) != 0])
+        run_len = pd.Series(gap_run).groupby(run_id).transform("sum").to_numpy()
+        filled.loc[(~valid) & (run_len > limit)] = np.nan
+        smooth = filled.rolling(win, center=True).mean()
+        res = np.where(smooth.isna(), filled, smooth)
+        out[tid] = [None if np.isnan(x) else (float(x), float(y)) for x, y in res]
+    return out

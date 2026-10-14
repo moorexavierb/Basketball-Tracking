@@ -50,6 +50,7 @@ class TeamAssigner:
     def __init__(self, cfg: TeamsConfig):
         self.cfg = cfg
         self.team_colors: np.ndarray | None = None  # (2, 3) LAB
+        self.track_colors: dict[int, np.ndarray] = {}  # median jersey LAB per track (color method)
         self._clip = None
 
     def sample_frames(self, tracks: PlayerTracks) -> dict[int, list[int]]:
@@ -76,6 +77,7 @@ class TeamAssigner:
                     colors.append(jersey_color(crop))
             if colors:
                 track_colors[tid] = np.median(np.stack(colors), axis=0)
+        self.track_colors = track_colors
         if len(track_colors) < 2:
             return {tid: 0 for tid in samples}
 

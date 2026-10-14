@@ -18,10 +18,21 @@ candidates instead.
 
 A YOLO pose model predicts 18 landmarks. With 4+ confident, non-collinear
 landmarks, `cv2.findHomography` (RANSAC) maps image pixels to court metres.
-A fit is rejected if its median reprojection error is above 1 m. Between
-good fits the last homography is held for `homography_hold_frames`; consecutive
-fits are blended (`homography_smoothing`) unless the court jumps by more than
-2 m, which is treated as a camera cut.
+A fit is rejected if its median reprojection error is above 1 m.
+
+Broadcast cameras pan and zoom constantly and keypoints are often missing, so
+the mapping is tracked rather than held (`court/camera_motion.py`,
+`track_homographies`). Background features (players, referees and learned
+screen overlays masked out) are tracked with optical flow, and RANSAC gives
+the frame-to-frame homography; a failed fit or a histogram jump marks a cut.
+Each frame's mapping is predicted from the previous one through that motion.
+A keypoint fit that agrees with the prediction is blended in
+(`homography_smoothing` is the weight on the prediction); one that disagrees
+by more than `reject_threshold_m` is dropped as a mislabel unless several fits
+in a row agree with each other. Frames between fits are filled forward and
+backward through the motion, weighted by distance, for up to
+`max_flow_frames`. With `court.camera_motion: false` the old behaviour (hold
+the last fit for `homography_hold_frames`) is used.
 
 `camera_from_homography` recovers the focal length from the two orthogonality
 constraints of a plane-induced homography (principal point at the image
@@ -29,9 +40,26 @@ centre, square pixels), then rotation and translation. Focal length is median
 filtered over time. This turns the 2D floor mapping into a 3x4 camera, which
 the 3D stage needs.
 
-Limits: broadcast close-ups often show fewer than 4 landmarks; those frames
-have no court mapping. Adding more landmark types (rim, backboard corners,
+Limits: a shot that never shows 4 landmarks (a close-up, a replay) has no
+court mapping, since there is nothing to carry it from. Adding more landmark types (rim, backboard corners,
 restricted-area arc points) is the main lever for coverage.
+
+## Track re-linking and smoothing (`detection/stitch.py`, `tactical/projector.py`)
+
+After court projection, a player track that ends is joined to one that starts
+within `relink_max_gap_s` on the same team, never on screen together, and
+reachable at `relink_max_speed_mps`. Court positions are then median-filtered
+(spikes from cut-off boxes), short gaps up to `max_fill_s` interpolated, and
+smoothed over `smooth_window_s`. Everything downstream (3D, speed, touches)
+uses the smoothed positions.
+
+## Diagnostics (`diagnostics.py`)
+
+Each run writes `diagnostics.json`, `diagnostics_frames.csv` and
+`diagnostics.png`: court mapping coverage and source, keypoints seen and fit
+error, rejected fits, cuts; track counts, short tracks, re-links, feet mapped
+off the court, frame-to-frame jumps; team colour separation; ball detection
+and possession rates. Findings name the weakest stage and its fix.
 
 ## 3. Ball track (`ball/interpolation.py`)
 

@@ -78,7 +78,10 @@ courtvision/
   events/timeline.py        touch / event / tracking tables, box score
   court/geometry.py         NBA/FIBA court spec and 18 keypoints
   court/keypoints.py        YOLO pose court keypoint detector
-  court/homography.py       robust homography, temporal filtering, camera recovery
+  court/homography.py       robust homography, tracking through pans, camera recovery
+  court/camera_motion.py    frame-to-frame camera motion (optical flow), cut detection
+  detection/stitch.py       re-link player tracks split by the tracker
+  diagnostics.py            per-stage health report (which stage is weak)
   tactical/                 image-to-court projection, top-down court rendering
   metrics/speed_distance.py smoothed speed and distance
   pose/                     2D body keypoints per track, lifted to 3D skeletons with the camera
