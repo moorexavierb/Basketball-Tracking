@@ -179,6 +179,8 @@ def test_run_writes_diagnostics(tmp_path, monkeypatch):
     assert d["ball"]["raw_detection_share"] == 0.0
     assert any(f["stage"] == "ball detection" for f in d["findings"])
     assert (tmp_path / "out" / "pan" / "diagnostics_frames.csv").exists()
+    assert d["video"]["height"] == SIZE[1] and d["video"]["fps"] == 30.0
+    assert any(f["stage"] == "input video" for f in d["findings"])  # 540p is flagged
     # Player 1 stands still on the court while the camera pans: its court position must stay put.
     xs = np.array([p for p in result.court_positions[1] if p is not None])
     assert np.abs(xs - (12.0, 6.0)).max() < 0.5, np.abs(xs - (12.0, 6.0)).max()

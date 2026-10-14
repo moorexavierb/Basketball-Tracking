@@ -132,7 +132,10 @@ class Pipeline:
         if c.output.write_diagnostics:
             result.diagnostics, result.diagnostics_frames = diagnose(
                 det.players, det.ball_candidates, result, calibration, self.court,
-                assigner.track_colors, assigner.team_colors, result.track_remap)
+                assigner.track_colors, assigner.team_colors, result.track_remap,
+                video={"width": size[0], "height": size[1], "fps": round(fps, 2),
+                       "bitrate_mbps": round(video.stat().st_size * 8 / max(total / fps, 1e-6) / 1e6, 2)
+                       if total else None})
             log.info("\n%s", format_report(result.diagnostics))
         self.write_outputs(result, video, out_dir)
         return result

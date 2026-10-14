@@ -59,11 +59,36 @@ def _raw_positions(players: PlayerTracks, homographies, court: CourtSpec):
 
 def diagnose(raw_players: PlayerTracks, ball_candidates: list[list[dict]], result: PipelineResult,
              calibration: list[dict], court: CourtSpec, track_colors: Optional[dict[int, np.ndarray]] = None,
-             team_colors: Optional[np.ndarray] = None, remap: Optional[dict[int, int]] = None
-             ) -> tuple[dict, pd.DataFrame]:
+             team_colors: Optional[np.ndarray] = None, remap: Optional[dict[int, int]] = None,
+             video: Optional[dict] = None) -> tuple[dict, pd.DataFrame]:
+    """``video`` (optional): {"width", "height", "fps", "bitrate_mbps"} of the input clip."""
     n, fps = len(result.players), result.fps
     remap = remap or {}
     findings: list[tuple[int, str, str]] = []  # (severity 1-3, stage, text)
+
+    # ------------------------------------------------------------ input video
+    ball_px = [max(c["bbox"][2] - c["bbox"][0], c["bbox"][3] - c["bbox"][1])
+               for cands in ball_candidates for c in cands]
+    player_px = [p["bbox"][3] - p["bbox"][1] for ft in raw_players for p in ft.values()]
+    video_block = dict(video or {})
+    video_block["median_ball_px"] = round(float(np.median(ball_px)), 1) if ball_px else None
+    video_block["median_player_px"] = round(float(np.median(player_px)), 1) if player_px else None
+    h, vfps, br = video_block.get("height"), video_block.get("fps"), video_block.get("bitrate_mbps")
+    if h and h < 720:
+        findings.append((2, "input video",
+                         f"The clip is {h}p. Below 720p the ball is only a few pixels across and court lines blur, "
+                         "which hurts ball and keypoint detection. Use 720p or better (1080p ideal)."))
+    if vfps and vfps < 25:
+        findings.append((1, "input video",
+                         f"The clip is {vfps:.0f} fps. Below 25 fps fast passes and cuts skip frames; use 30 or 60 fps."))
+    if br and h and br < (2.5 if h < 1000 else 4.0):
+        findings.append((1, "input video",
+                         f"The clip is heavily compressed ({br:.1f} Mbit/s for {h}p), which smears the ball and lines "
+                         "into blocks. Aim for at least 4 Mbit/s at 720p or 8 Mbit/s at 1080p."))
+    if video_block["median_ball_px"] is not None and video_block["median_ball_px"] < 10:
+        findings.append((1, "input video",
+                         f"Detected balls are about {video_block['median_ball_px']:.0f} px across; under ~10 px "
+                         "detection gets unreliable. A higher-resolution source helps most here."))
 
     # ------------------------------------------------------------ court mapping
     cal = pd.DataFrame(calibration) if calibration else pd.DataFrame(index=range(n))
@@ -200,7 +225,7 @@ def diagnose(raw_players: PlayerTracks, ball_candidates: list[list[dict]], resul
         pose_block = {"skeleton_share": round(pf / max(sum(per_frame), 1), 3)}
 
     findings.sort(key=lambda x: -x[0])
-    summary = {"frames": n, "fps": fps, "duration_s": round(n / fps, 2), "court": court_block,
+    summary = {"frames": n, "fps": fps, "duration_s": round(n / fps, 2), "video": video_block, "court": court_block,
                "players": players_block, "teams": teams_block, "ball": ball_block, "pose": pose_block,
                "findings": [{"severity": s, "stage": st, "finding": t} for s, st, t in findings]}
 
@@ -222,6 +247,7 @@ def format_report(summary: dict) -> str:
     lines = [
         f"CourtVision diagnostics: {summary['frames']} frames ({summary['duration_s']} s)",
         "",
+        _video_line(summary.get("video") or {}),
         f"Court mapping   mapped {pct(c['mapped_share'])} of frames (keypoints {pct(c['keypoint_fit_share'])}, "
         f"camera flow {pct(c['flow_share'])}); {c['mean_keypoints_seen']:.1f} keypoints seen per frame, "
         f"fit error {err}, {pct(c['rejected_fit_share'])} fits rejected, longest gap {c['longest_unmapped_s']} s"
@@ -243,6 +269,19 @@ def format_report(summary: dict) -> str:
     else:
         lines.append("No stage stands out as broken.")
     return "\n".join(lines)
+
+
+def _video_line(v: dict) -> str:
+    parts = []
+    if v.get("width"):
+        parts.append(f"{v['width']}x{v['height']} at {v['fps']:.0f} fps")
+    if v.get("bitrate_mbps"):
+        parts.append(f"{v['bitrate_mbps']:.1f} Mbit/s")
+    if v.get("median_player_px"):
+        parts.append(f"players ~{v['median_player_px']:.0f} px tall")
+    if v.get("median_ball_px"):
+        parts.append(f"ball ~{v['median_ball_px']:.0f} px")
+    return "Input video     " + (", ".join(parts) or "unknown")
 
 
 def plot_diagnostics(frames: pd.DataFrame, fps: float, path: str | Path) -> Optional[Path]:
